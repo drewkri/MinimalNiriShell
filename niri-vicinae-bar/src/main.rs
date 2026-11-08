@@ -375,8 +375,17 @@ async fn update_window_display(label: Label, icon: Image) {
                         windows.remove(&id);
                     } else if parsed.has_key("WindowOpenedOrChanged")
                         && let Some((id, data)) =
-                            window_json_to_data(&parsed["WindowOpenedOrChanged"])
+                            window_json_to_data(&parsed["WindowOpenedOrChanged"]["window"])
                     {
+                        if parsed["WindowOpenedOrChanged"]["window"]["is_focused"]
+                            .as_bool()
+                            .is_some_and(|b| b)
+                        {
+                            label.set_text(&data.title);
+                            icon.set_icon_name(Some(find_icon_for_app(&icon_theme, &data.app_id)));
+                            label.set_visible(true);
+                            icon.set_visible(true);
+                        }
                         windows.insert(id, data);
                     }
                 }

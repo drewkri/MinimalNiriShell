@@ -48,7 +48,7 @@ Then, edit your Niri configuration and make sure it spawns Vicinae (`vicinae ser
 handle a desktop background and customize the size and position of the hot corner. If you want more background options consider bringing
 your own program e.g. swaybg.
 
-Optionally, have the device spawn the bar (`niri-vicinae-bar`). You can also have the device spawn the bar only when tablet mode is detected, and kill it (`pkill niri-vicinae-bar`) when the device is no longer in tablet mode.
+Optionally, have the device spawn the bar (`niri-vicinae-bar`). You can also have the device spawn the bar only when tablet mode is detected, and kill it (`pkill -f niri-vicinae-bar`) when the device is no longer in tablet mode.
 
 The bar has some settings which can be configured by running `niri-vicinae-bar --settings`. It will also attempt to load custom CSS from
 a file named `style.css` in the config directory (`~/.config/io.github.drewkri.niri-vicinae-bar`).
