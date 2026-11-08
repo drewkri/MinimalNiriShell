@@ -17,7 +17,7 @@ Integrates heavily with Vicinae for most tasks, and some other applications are 
 
 # Installation
 
-Clone the repository and run `setup.sh` (TODO: Make this work).
+Clone the repository and run `setup.sh`.
 
 In order for everything to work, you must have the following packages installed (you can probably find all of them in your distro's packages):
 
@@ -31,6 +31,8 @@ if you prefer:
 
 - nm-connection-editor
 - swaync
+
+Also make sure you have ~/.local/bin in your PATH.
 
 The script will do the following:
 
