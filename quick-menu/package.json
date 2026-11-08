@@ -1,0 +1,81 @@
+{
+  "$schema": "https://raw.githubusercontent.com/vicinaehq/vicinae/refs/heads/main/extra/schemas/extension.json",
+  "name": "quick-menu",
+  "title": "Quick Menu",
+  "description": "A general purpose desktop quick-access menu, with access to bluetooth, wifi, media players, and more.",
+  "categories": [],
+  "license": "MIT",
+  "author": "drewkri",
+  "contributors": [],
+  "pastContributors": [],
+  "icon": "extension_icon.png",
+  "commands": [
+    {
+      "name": "quick-menu",
+      "title": "Quick Menu",
+      "description": "Open the quick menu.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "weekStart",
+      "type": "dropdown",
+      "required": true,
+      "title": "First Day of Week",
+      "data": [
+        {
+          "title": "Monday",
+          "value": "1"
+        },
+        {
+          "title": "Sunday",
+          "value": "0"
+        }
+      ],
+      "description": "What to show as the first day of the week on the calendar",
+      "default": "1"
+    },
+    {
+      "name": "notificationsCommand",
+      "type": "textfield",
+      "required": true,
+      "title": "Open Notifications Command",
+      "description": "Command to run when activating the notifications command from the menu",
+      "default": "swaync-client -op"
+    },
+    {
+      "name": "networkSettingsLink",
+      "type": "textfield",
+      "required": true,
+      "title": "Network Settings Deeplink",
+      "description": "Deeplink to open to access advanced network settings.",
+      "default": "vicinae://launch/applications/nm-connection-editor"
+    },
+    {
+      "name": "showBattery",
+      "type": "checkbox",
+      "required": true,
+      "title": "Show Battery in Menu",
+      "label": "Show Battery in Menu",
+      "description": "Enabling this will show the current battery percentage in the quick menu",
+      "default": false
+    }
+  ],
+  "scripts": {
+    "build": "vici build",
+    "dev": "vici develop",
+    "format": "biome format --write src",
+    "lint": "vici lint"
+  },
+  "dependencies": {
+    "@vicinae/api": "^0.29.2",
+    "calendar": "^0.1.1",
+    "weeknumber": "^1.2.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.2",
+    "@types/calendar": "^0.1.2",
+    "typescript": "^5.9.2"
+  }
+}

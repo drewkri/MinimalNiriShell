@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<gresources>
+<gresource prefix="/hud/icons">
+  <file preprocess="xml-stripblanks">menu-large-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">bell-outline-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">radiowaves-1-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">speedometer-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">wrench-wide-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">left-large-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">right-large-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">arrows-pointing-outward-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">tabs-stack-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">circle-outline-thick-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">plus-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">circle-filled-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">cross-large-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">external-link-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">speakers-symbolic.svg</file>
+  <file preprocess="xml-stripblanks">user-trash-symbolic.svg</file>
+</gresource>
+</gresources>
