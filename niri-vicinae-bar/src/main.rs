@@ -1,39 +1,24 @@
-use clap::{Arg, Parser};
-use core::time;
 use json::JsonValue;
-use log::{error, info};
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    ffi::OsStr,
-    fs,
-    io::{BufRead, BufReader},
-    os::fd::AsFd,
-    process::Command,
-    sync::{Arc, RwLock},
-};
+use log::error;
+use std::{collections::HashMap, ffi::OsStr, fs, process::Command};
 
-use chrono::{Local, Timelike};
+use chrono::Local;
 use gtk4::{
-    Button, CssProvider, GestureSwipe, IconTheme, Image, Label, PopoverMenu, Widget,
+    Button, CssProvider, IconTheme, Image, Label, PopoverMenu,
     gdk::Display,
     gio::{
-        self, ActionEntry, ApplicationFlags, DataInputStream, Subprocess, SubprocessFlags,
+        self, ActionEntry, DataInputStream, Subprocess, SubprocessFlags,
         prelude::{
             ActionMapExt, ActionMapExtManual, ApplicationExt, ApplicationExtManual,
             DataInputStreamExtManual,
         },
         resources_register_include,
     },
-    glib::{self, ExitCode, OptionFlags, WeakRef, object::IsA},
-    prelude::{
-        ActionableExt, BoxExt, ButtonExt, GtkApplicationExt, GtkWindowExt, PopoverExt, WidgetExt,
-    },
-    subclass::{button, window},
+    glib::{self, OptionFlags},
+    prelude::{BoxExt, ButtonExt, GtkApplicationExt, GtkWindowExt, PopoverExt, WidgetExt},
 };
 use gtk4_layer_shell::LayerShell;
 use libadwaita::{Application, prelude::AdwApplicationWindowExt};
-use niri_ipc::{Event, Request, Workspace, socket::Socket};
 
 use crate::settings::{Config, open_settings_window};
 
@@ -47,7 +32,7 @@ fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.add_main_option(
         "settings",
-        ('s' as u8).into(),
+        b's'.into(),
         OptionFlags::NO_ARG,
         glib::OptionArg::None,
         "Open the settings menu instead of starting the bar",
@@ -301,10 +286,10 @@ fn parse_and_run_command(cmd: &str) {
 fn try_get_battery() -> Option<(String, u32)> {
     // Tries both BAT0 and BAT1 since the main battery could be either.
     for i in 0..=1 {
-        if let Some(battery) = try_get_battery_index(i) {
-            if let Ok(parsed) = battery.parse() {
-                return Some((battery, parsed));
-            }
+        if let Some(battery) = try_get_battery_index(i)
+            && let Ok(parsed) = battery.parse()
+        {
+            return Some((battery, parsed));
         }
     }
 
@@ -314,7 +299,7 @@ fn try_get_battery() -> Option<(String, u32)> {
 /// Gets battery for a specific battery e.g. BAT0 or BAT1.
 fn try_get_battery_index(i: u32) -> Option<String> {
     let command = Command::new("cat")
-        .arg(&format!("/sys/class/power_supply/BAT{}/capacity", i))
+        .arg(format!("/sys/class/power_supply/BAT{}/capacity", i))
         .spawn()
         .ok()?;
     let output = command.wait_with_output().ok()?;
@@ -388,12 +373,11 @@ async fn update_window_display(label: Label, icon: Image) {
                         }
                     } else if let Some(id) = parsed["WindowClosed"]["id"].as_i32() {
                         windows.remove(&id);
-                    } else if parsed.has_key("WindowOpenedOrChanged") {
-                        if let Some((id, data)) =
+                    } else if parsed.has_key("WindowOpenedOrChanged")
+                        && let Some((id, data)) =
                             window_json_to_data(&parsed["WindowOpenedOrChanged"])
-                        {
-                            windows.insert(id, data);
-                        }
+                    {
+                        windows.insert(id, data);
                     }
                 }
                 Err(e) => {

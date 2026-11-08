@@ -6,20 +6,13 @@ use std::{
 
 use dirs::config_dir;
 use gtk4::{
-    Button, Frame, Image, Label, ListBox, ScrolledWindow, SearchEntry,
-    glib::{
-        self,
-        object::{Cast, ObjectExt},
-    },
-    prelude::{BoxExt, ButtonExt, EditableExt, FrameExt, WidgetExt},
+    glib::object::ObjectExt,
+    prelude::{EditableExt, WidgetExt},
 };
 use libadwaita::{
-    ActionRow, Application, ApplicationWindow, ButtonRow, Dialog, EntryRow, HeaderBar,
-    PreferencesGroup, PreferencesPage, SwitchRow, ToolbarView,
-    prelude::{
-        ActionRowExt, AdwApplicationWindowExt, AdwDialogExt, EntryRowExt, PreferencesGroupExt,
-        PreferencesPageExt,
-    },
+    Application, ApplicationWindow, EntryRow, HeaderBar, PreferencesGroup, PreferencesPage,
+    SwitchRow, ToolbarView,
+    prelude::{AdwApplicationWindowExt, EntryRowExt, PreferencesGroupExt, PreferencesPageExt},
 };
 use serde::{Deserialize, Serialize};
 
