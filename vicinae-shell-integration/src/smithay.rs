@@ -222,7 +222,7 @@ impl LayerShellHandler for AppState {
                         }
                         _ => {
                             if let Err(e) = self.fill_window_with_image(
-                                true,
+                                false,
                                 window.surface.clone(),
                                 configure.new_size.0,
                                 configure.new_size.1,
