@@ -286,10 +286,11 @@ fn parse_and_run_command(cmd: &str) {
 fn try_get_battery() -> Option<(String, u32)> {
     // Tries both BAT0 and BAT1 since the main battery could be either.
     for i in 0..=1 {
-        if let Some(battery) = try_get_battery_index(i)
-            && let Ok(parsed) = battery.parse()
-        {
-            return Some((battery, parsed));
+        if let Some(battery) = try_get_battery_index(i) {
+            let trimmed = battery.trim();
+            if let Ok(parsed) = trimmed.parse() {
+                return Some((trimmed.to_owned(), parsed));
+            }
         }
     }
 
@@ -298,11 +299,10 @@ fn try_get_battery() -> Option<(String, u32)> {
 
 /// Gets battery for a specific battery e.g. BAT0 or BAT1.
 fn try_get_battery_index(i: u32) -> Option<String> {
-    let command = Command::new("cat")
+    let output = Command::new("cat")
         .arg(format!("/sys/class/power_supply/BAT{}/capacity", i))
-        .spawn()
+        .output()
         .ok()?;
-    let output = command.wait_with_output().ok()?;
     if output.status.success() {
         String::from_utf8(output.stdout).ok()
     } else {
