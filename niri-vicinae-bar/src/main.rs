@@ -147,7 +147,7 @@ fn build_bar(app: &Application, cfg: &Config) -> libadwaita::ApplicationWindow {
         .css_classes(["circular"])
         .build();
     let launcher_button = gtk4::Button::builder()
-        .icon_name("menu-large-symbolic")
+        .icon_name("open-menu-symbolic")
         .valign(gtk4::Align::Center)
         .hexpand(false)
         .css_classes(["circular"])
