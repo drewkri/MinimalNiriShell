@@ -55,7 +55,7 @@ impl CompositorHandler for AppState {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        surface: &wl_surface::WlSurface,
+        _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
         // no windows need redrawing, ever.
@@ -172,9 +172,9 @@ impl ProvidesRegistryState for AppState {
 impl LayerShellHandler for AppState {
     fn closed(
         &mut self,
-        conn: &Connection,
-        qh: &smithay_client_toolkit::reexports::client::QueueHandle<Self>,
-        layer: &smithay_client_toolkit::shell::wlr_layer::LayerSurface,
+        _conn: &Connection,
+        _qh: &smithay_client_toolkit::reexports::client::QueueHandle<Self>,
+        _layer: &smithay_client_toolkit::shell::wlr_layer::LayerSurface,
     ) {
     }
 
@@ -288,33 +288,28 @@ impl PointerHandler for AppState {
         for event in events {
             if let Some(window) = self.windows.get(&event.surface.id().protocol_id())
                 && window.window_type == WindowType::HotCorner
+                && let smithay_client_toolkit::seat::pointer::PointerEventKind::Enter { serial: _ } =
+                    event.kind
             {
-                match event.kind {
-                    smithay_client_toolkit::seat::pointer::PointerEventKind::Enter {
-                        serial: _,
-                    } => {
-                        let exit_status = Command::new("vicinae")
-                            .arg("state")
-                            .arg("open")
-                            .spawn()
-                            .and_then(|mut p| p.wait());
-                        trace!(
-                            "Received pointer enter, probing vicinae returned {:?}",
-                            exit_status
-                        );
-                        // check if exit code is NOT 0
-                        if !exit_status
-                            .ok()
-                            .is_some_and(|status| status.code().is_some_and(|c| c == 0))
-                        {
-                            // this command returns 0 when vicinae is open
-                            info!("Opening vicinae quick menu");
-                            let _ = Command::new("vicinae")
-                                .arg("vicinae://launch/@drewkri/quick-menu/quick-menu")
-                                .spawn();
-                        }
-                    }
-                    _ => {}
+                let exit_status = Command::new("vicinae")
+                    .arg("state")
+                    .arg("open")
+                    .spawn()
+                    .and_then(|mut p| p.wait());
+                trace!(
+                    "Received pointer enter, probing vicinae returned {:?}",
+                    exit_status
+                );
+                // check if exit code is NOT 0
+                if exit_status
+                    .ok()
+                    .is_none_or(|status| status.code().is_none_or(|c| c != 0))
+                {
+                    // this command returns 0 when vicinae is open
+                    info!("Opening vicinae quick menu");
+                    let _ = Command::new("vicinae")
+                        .arg("vicinae://launch/@drewkri/quick-menu/quick-menu")
+                        .spawn();
                 }
             }
         }

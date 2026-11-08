@@ -1,82 +1,92 @@
-use clap::Parser;
-use freedesktop_desktop_entry::{DesktopEntry, get_languages_from_env};
+use clap::{Arg, Parser};
+use core::time;
+use json::JsonValue;
+use log::{error, info};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    ffi::OsStr,
+    fs,
+    io::{BufRead, BufReader},
+    os::fd::AsFd,
     process::Command,
     sync::{Arc, RwLock},
 };
-use zbus::blocking;
 
 use chrono::{Local, Timelike};
 use gtk4::{
-    CssProvider, GestureSwipe, IconTheme, Image, Widget,
+    Button, CssProvider, GestureSwipe, IconTheme, Image, Label, PopoverMenu, Widget,
     gdk::Display,
     gio::{
-        self, ActionEntry,
-        prelude::{ActionMapExtManual, ApplicationExt, ApplicationExtManual},
+        self, ActionEntry, ApplicationFlags, DataInputStream, Subprocess, SubprocessFlags,
+        prelude::{
+            ActionMapExt, ActionMapExtManual, ApplicationExt, ApplicationExtManual,
+            DataInputStreamExtManual,
+        },
         resources_register_include,
     },
-    glib::{self, ExitCode, object::IsA},
-    prelude::{ActionableExt, BoxExt, ButtonExt, GtkApplicationExt, GtkWindowExt, WidgetExt},
+    glib::{self, ExitCode, OptionFlags, WeakRef, object::IsA},
+    prelude::{
+        ActionableExt, BoxExt, ButtonExt, GtkApplicationExt, GtkWindowExt, PopoverExt, WidgetExt,
+    },
+    subclass::{button, window},
 };
 use gtk4_layer_shell::LayerShell;
 use libadwaita::{Application, prelude::AdwApplicationWindowExt};
-use niri_ipc::{Event, Workspace};
+use niri_ipc::{Event, Request, Workspace, socket::Socket};
 
-use crate::{
-    app_launcher::LauncherContext,
-    dbus_actions::ActionsProxyBlocking,
-    settings::{Config, open_settings_window},
-};
+use crate::settings::{Config, open_settings_window};
 
-const APP_ID: &str = "io.github.DrewCodesBadly.NiriTouchHud";
-const CSS_STRING: &str = include_str!("style.css");
+const APP_ID: &str = "io.github.drewkri.niri-vicinae-bar";
 
-mod app_launcher;
-mod dbus_actions;
 mod settings;
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    #[arg(short, long = "toggle-launcher")]
-    toggle_launcher: bool,
-}
-
-// awful code quality here because this is a slop app I just need to work for myself
-// sorry to anyone reading this
-
 fn main() -> glib::ExitCode {
-    let args = Args::parse();
-    if args.toggle_launcher {
-        let conn = blocking::Connection::session().expect("Failed to connect to dbus user session");
-        let proxy = ActionsProxyBlocking::new(&conn).unwrap();
-        proxy
-            .activate("toggle-launcher", &[], HashMap::new())
-            .unwrap();
-        return ExitCode::SUCCESS;
-    }
-    let _ = resources_register_include!("niri-touch-hud.gresource");
+    env_logger::init();
+    let _ = resources_register_include!("niri-vicinae-hud.gresource");
     let app = Application::builder().application_id(APP_ID).build();
+    app.add_main_option(
+        "settings",
+        ('s' as u8).into(),
+        OptionFlags::NO_ARG,
+        glib::OptionArg::None,
+        "Open the settings menu instead of starting the bar",
+        None,
+    );
     // startup tasks
     app.connect_startup(|_| {
         let display = Display::default().expect("No display connected.");
 
         // Handle loading CSS
-        let provider = CssProvider::new();
-        provider.load_from_data(CSS_STRING);
-        gtk4::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
+        let mut path = Config::config_path();
+        path.push("style.css");
+        if let Ok(css) = fs::read_to_string(path) {
+            let provider = CssProvider::new();
+            provider.load_from_data(&css);
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
 
         // load icons
         let theme = IconTheme::for_display(&display);
         theme.add_resource_path("/hud/icons");
     });
-    app.connect_activate(activate);
+    app.connect_handle_local_options(|app, opts| {
+        let settings = opts
+            .lookup::<bool>("settings")
+            .ok()
+            .and_then(|inner| inner)
+            .is_some_and(|b| b);
+        if settings {
+            app.connect_activate(open_settings_window);
+        } else {
+            app.connect_activate(activate);
+        }
+        std::ops::ControlFlow::Continue(())
+    });
 
     app.run();
 
@@ -85,14 +95,9 @@ fn main() -> glib::ExitCode {
 
 fn activate(app: &Application) {
     let cfg = Config::try_load();
-    // Create two windows: Left side and right side
-    let left_win = build_left_window(app, &cfg);
-    let bottom_win = build_bottom_window(app, &cfg);
-    bottom_win.set_size_request(1, 1);
-    left_win.set_size_request(1, 1);
-    // Bottom first, as it has the corner contents
-    bottom_win.show();
-    left_win.show();
+    let bar = build_bar(app, &cfg);
+    bar.set_size_request(1, 1);
+    bar.show();
 
     app.add_action_entries([ActionEntry::builder("reload-config")
         .activate(glib::clone!(
@@ -106,235 +111,31 @@ fn activate(app: &Application) {
                         win.close();
                     }
                 }
-                let left_win = build_left_window(&app, &cfg);
-                let bottom_win = build_bottom_window(&app, &cfg);
-                bottom_win.set_size_request(1, 1);
-                left_win.set_size_request(1, 1);
+                let bar = build_bar(&app, &cfg);
+                bar.set_size_request(1, 1);
                 // Bottom first, as it has the corner contents
-                bottom_win.show();
-                left_win.show();
+                bar.show();
             }
         ))
         .build()]);
 }
 
-// not currently built to handle multiple monitors
-fn rebuild_workspace_widget(list: &Vec<Workspace>) -> impl IsA<Widget> {
-    let b = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(8)
-        .build();
-
-    for w in list {
-        let name = if w.is_focused {
-            "circle-filled-symbolic"
-        } else {
-            "circle-outline-thick-symbolic"
-        };
-        let i = Image::builder().icon_name(name).build();
-        b.append(&i);
-    }
-
-    b
-}
-
-fn build_left_window(app: &Application, cfg: &Config) -> libadwaita::ApplicationWindow {
+fn build_bar(app: &Application, cfg: &Config) -> libadwaita::ApplicationWindow {
     let window = libadwaita::ApplicationWindow::new(app);
 
     window.init_layer_shell();
     window.set_layer(gtk4_layer_shell::Layer::Top);
     window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::None);
-    window.set_anchor(gtk4_layer_shell::Edge::Bottom, true);
-    window.set_anchor(gtk4_layer_shell::Edge::Top, true);
-    window.set_anchor(gtk4_layer_shell::Edge::Left, true);
-    window.auto_exclusive_zone_enable();
-
-    let left_box = gtk4::CenterBox::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .vexpand(true)
-        .margin_start(4)
-        .margin_end(4)
-        .margin_top(6)
-        .margin_bottom(6)
-        .build();
-    window.set_content(Some(&left_box));
-
-    let overview_btn = gtk4::Button::builder()
-        .icon_name("tabs-stack-symbolic")
-        .valign(gtk4::Align::Start)
-        .halign(gtk4::Align::Center)
-        .vexpand(false)
-        .css_classes(["circular", "opaque"])
-        .build();
-    overview_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("open-overview")
-            .spawn();
-    });
-
-    let close_btn = gtk4::Button::builder()
-        .icon_name("cross-large-symbolic")
-        .halign(gtk4::Align::Center)
-        .vexpand(false)
-        .css_classes(["circular"])
-        .build();
-
-    overview_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("open-overview")
-            .spawn();
-    });
-
-    close_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("close-window")
-            .spawn();
-    });
-
-    let buttons_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .vexpand(false)
-        .spacing(32)
-        .build();
-    buttons_box.append(&overview_btn);
-    buttons_box.append(&close_btn);
-
-    let workspaces_box = gtk4::CenterBox::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .vexpand(true)
-        .build();
-
-    let swipe_controller = GestureSwipe::new();
-    let inverted_scroll = cfg.inverse_workspace_scroll;
-    swipe_controller.connect_swipe(move |_, _, vy| {
-        if (inverted_scroll && vy < 0.0) || (!inverted_scroll && vy > 0.0) {
-            let _ = Command::new("niri")
-                .arg("msg")
-                .arg("action")
-                .arg("focus-workspace-down")
-                .spawn();
-        } else {
-            let _ = Command::new("niri")
-                .arg("msg")
-                .arg("action")
-                .arg("focus-workspace-up")
-                .spawn();
-        }
-    });
-    workspaces_box.add_controller(swipe_controller);
-
-    glib::spawn_future_local(glib::clone!(
-        #[weak]
-        workspaces_box,
-        async move {
-            // unwraps are used here since this whole thing won't work if niri isn't running anyway.
-            let mut niri_socket = niri_ipc::socket::Socket::connect().unwrap();
-            let _ = niri_socket.send(niri_ipc::Request::EventStream);
-            let read_events = niri_socket.read_events();
-            let lock = Arc::new(RwLock::new(read_events));
-
-            let mut list = Vec::new();
-
-            loop {
-                let lock_clone = lock.clone();
-                let response = gio::spawn_blocking(move || lock_clone.write().unwrap()())
-                    .await
-                    .unwrap();
-                if let Ok(event) = response {
-                    match event {
-                        Event::WorkspacesChanged { workspaces } => {
-                            list = workspaces;
-                            list.sort_by(|w1, w2| w1.idx.cmp(&w2.idx));
-                            let b = rebuild_workspace_widget(&list);
-                            workspaces_box.set_center_widget(Some(&b));
-                        }
-                        Event::WorkspaceActivated { id, focused: _ } => {
-                            for w in &mut list {
-                                w.is_focused = w.id == id;
-                            }
-                            let b = rebuild_workspace_widget(&list);
-                            workspaces_box.set_center_widget(Some(&b));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    ));
-
-    let shortcuts_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .vexpand(false)
-        .spacing(8)
-        .build();
-    let settings_btn = gtk4::Button::builder()
-        .icon_name("wrench-wide-symbolic")
-        .valign(gtk4::Align::Center)
-        .hexpand(false)
-        .css_classes(["circular"])
-        .build();
-    shortcuts_box.append(&settings_btn);
-    let locales = get_languages_from_env();
-    for shortcut in cfg.shortcuts.iter().rev() {
-        if let Ok(entry) = DesktopEntry::from_path(shortcut, Some(&locales)) {
-            let icon = entry.icon().unwrap_or("external-link-symbolic");
-            let img = if icon.starts_with('/') || icon.starts_with('~') {
-                Image::from_file(icon)
-            } else {
-                Image::from_icon_name(icon)
-            };
-            let btn = gtk4::Button::builder()
-                .css_classes(["circular"])
-                .child(&img)
-                .build();
-            // should always be true but in case not the shortcut won't show up instead of crashing
-            if let Ok(exec) = entry.parse_exec() {
-                btn.connect_clicked(move |_| {
-                    let mut iter = exec.iter();
-                    let mut cmd = Command::new(iter.next().unwrap());
-                    for arg in iter {
-                        cmd.arg(arg);
-                    }
-                    let _ = cmd.spawn();
-                });
-            }
-            shortcuts_box.append(&btn);
-        }
+    if cfg.bar_on_top {
+        window.set_anchor(gtk4_layer_shell::Edge::Top, true);
+    } else {
+        window.set_anchor(gtk4_layer_shell::Edge::Bottom, true);
     }
-
-    settings_btn.connect_clicked(glib::clone!(
-        #[weak]
-        app,
-        move |_| {
-            open_settings_window(&app);
-        }
-    ));
-
-    left_box.set_start_widget(Some(&buttons_box));
-    left_box.set_center_widget(Some(&workspaces_box));
-    left_box.set_end_widget(Some(&shortcuts_box));
-
-    window
-}
-
-fn build_bottom_window(app: &Application, cfg: &Config) -> libadwaita::ApplicationWindow {
-    let window = libadwaita::ApplicationWindow::new(app);
-
-    window.init_layer_shell();
-    window.set_layer(gtk4_layer_shell::Layer::Top);
-    window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::None);
-    window.set_anchor(gtk4_layer_shell::Edge::Bottom, true);
     window.set_anchor(gtk4_layer_shell::Edge::Left, true);
     window.set_anchor(gtk4_layer_shell::Edge::Right, true);
     window.auto_exclusive_zone_enable();
 
-    let bottom_box = gtk4::Box::builder()
+    let main_box = gtk4::CenterBox::builder()
         .orientation(gtk4::Orientation::Horizontal)
         .hexpand(true)
         .margin_bottom(4)
@@ -342,98 +143,93 @@ fn build_bottom_window(app: &Application, cfg: &Config) -> libadwaita::Applicati
         .margin_end(6)
         .margin_start(6)
         .build();
-    window.set_content(Some(&bottom_box));
+    window.set_content(Some(&main_box));
 
-    // Launcher
-    let launcher_context = LauncherContext::new();
-    let cell = RefCell::new(launcher_context);
+    let buttons_box = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .hexpand(false)
+        .halign(gtk4::Align::Center)
+        .spacing(24)
+        // .margin_bottom(4)
+        // .margin_end(4)
+        // .margin_start(4)
+        // .margin_top(4)
+        .build();
+    let overview_button = gtk4::Button::builder()
+        .icon_name("tabs-stack-symbolic")
+        .valign(gtk4::Align::Center)
+        .hexpand(false)
+        .css_classes(["circular"])
+        .build();
     let launcher_button = gtk4::Button::builder()
         .icon_name("menu-large-symbolic")
         .valign(gtk4::Align::Center)
-        .halign(gtk4::Align::Start)
-        .hexpand(false)
-        .css_classes(["circular", "opaque"])
-        .build();
-    let toggle_launcher_act = ActionEntry::builder("toggle-launcher")
-        .activate(glib::clone!(
-            #[weak]
-            app,
-            move |_, _, _| {
-                let mut bind = cell.borrow_mut();
-                if bind.is_open() {
-                    bind.close();
-                } else {
-                    bind.open(&app);
-                }
-            }
-        ))
-        .build();
-    app.add_action_entries([toggle_launcher_act]);
-    launcher_button.set_action_name(Some("app.toggle-launcher"));
-
-    let misc_widgets_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Horizontal)
-        .hexpand(true)
-        .halign(gtk4::Align::Center)
-        .spacing(32)
-        // .margin_bottom(4)
-        // .margin_end(4)
-        // .margin_start(4)
-        // .margin_top(4)
-        .build();
-    let niri_controls_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Horizontal)
-        .hexpand(true)
-        .halign(gtk4::Align::Center)
-        .spacing(32)
-        // .margin_bottom(4)
-        // .margin_end(4)
-        // .margin_start(4)
-        // .margin_top(4)
-        .build();
-    let notif_button = gtk4::Button::builder()
-        .icon_name("bell-outline-symbolic")
-        .valign(gtk4::Align::Center)
-        .halign(gtk4::Align::End)
-        .hexpand(false)
-        .css_classes(["circular", "opaque"])
-        .build();
-
-    // Misc Widgets
-    let wifi_btn = gtk4::Button::builder()
-        .icon_name("radiowaves-1-symbolic")
-        .valign(gtk4::Align::Center)
         .hexpand(false)
         .css_classes(["circular"])
         .build();
-    let perf_btn = gtk4::Button::builder()
-        .icon_name("speedometer-symbolic")
-        .valign(gtk4::Align::Center)
-        .hexpand(false)
-        .css_classes(["circular"])
-        .build();
-    let audio_btn = gtk4::Button::builder()
-        .icon_name("speakers-symbolic")
-        .valign(gtk4::Align::Center)
-        .hexpand(false)
-        .css_classes(["circular"])
-        .build();
-    let audio_cmd = cfg.audio_settings_cmd.clone();
-    audio_btn.connect_clicked(move |_| {
-        parse_and_run_command(&audio_cmd);
+    overview_button.connect_clicked(|_| {
+        let _ = Command::new("niri")
+            .arg("msg")
+            .arg("action")
+            .arg("open-overview")
+            .spawn();
     });
-    let wifi_cmd = cfg.network_settings_cmd.clone();
-    wifi_btn.connect_clicked(move |_| {
-        parse_and_run_command(&wifi_cmd);
+    launcher_button.connect_clicked(|_| {
+        let _ = Command::new("vicinae").arg("open").spawn();
     });
-    misc_widgets_box.append(&wifi_btn);
-    misc_widgets_box.append(&perf_btn);
-    misc_widgets_box.append(&audio_btn);
+    buttons_box.append(&overview_button);
+    buttons_box.append(&launcher_button);
 
-    // Date/time
+    if cfg.show_keyboard_button {
+        let keyboard_button = gtk4::Button::builder()
+            .icon_name("input-keyboard-symbolic")
+            .valign(gtk4::Align::Center)
+            .hexpand(false)
+            .css_classes(["circular"])
+            .build();
+        // moved into closure
+        let keyboard_command = cfg.keyboard_button_command.clone();
+        keyboard_button.connect_clicked(move |_| {
+            parse_and_run_command(&keyboard_command);
+        });
+        buttons_box.append(&keyboard_button);
+    }
+
+    // Central current window button
+    let app_lbl = gtk4::Label::builder()
+        .label("")
+        .valign(gtk4::Align::Center)
+        .halign(gtk4::Align::Center)
+        .hexpand(true)
+        .visible(false)
+        .build();
+    let app_icon = gtk4::Image::builder().icon_name("").visible(false).build();
+    let center_btn_box = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(4)
+        .hexpand(true)
+        .build();
+    center_btn_box.append(&app_icon);
+    center_btn_box.append(&app_lbl);
+    let center_btn = gtk4::Button::builder()
+        .hexpand(false)
+        .css_classes(["flat"])
+        .child(&center_btn_box)
+        .build();
+    // local thread which will handle talking to niri and getting the currently focused window
+    glib::spawn_future_local(glib::clone!(
+        #[weak]
+        app_lbl,
+        #[weak]
+        app_icon,
+        async move { update_window_display(app_lbl, app_icon).await }
+    ));
+    add_app_menu_popover(app, &center_btn);
+
+    // Date/time/battery indicator
     let time_lbl = gtk4::Label::builder()
         .label("")
-        .css_classes(["numeric", "title-2"])
+        .css_classes(["numeric", "title-4"])
         // .css_classes(["numeric"])
         .halign(gtk4::Align::Center)
         .valign(gtk4::Align::Center)
@@ -441,79 +237,50 @@ fn build_bottom_window(app: &Application, cfg: &Config) -> libadwaita::Applicati
         .build();
 
     let fmt_str_clone = cfg.time_format.clone();
+    // will move into closure
+    let show_battery = cfg.battery;
     glib::spawn_future_local(glib::clone!(
         #[weak]
         time_lbl,
         async move {
-            let mut prev_now_minutes = 67; // arbitrary impossible number :3
             loop {
                 let now = Local::now();
-                let minute = now.minute();
-                if minute != prev_now_minutes {
-                    // refresh everything
-                    prev_now_minutes = minute;
-                    time_lbl.set_text(&now.format(&fmt_str_clone).to_string());
-                    time_lbl.set_tooltip_text(Some(&now.format("%A, %B%e").to_string()));
+                // refresh everything
+                let mut text = String::new();
+                if show_battery && let Some((bat_str, bat_num)) = try_get_battery() {
+                    let icon = match bat_num {
+                        0..15 => "",
+                        15..40 => "",
+                        40..60 => "",
+                        60..85 => "",
+                        85..=100 => "",
+                        _ => "", // should be unreachable, i hope, unless your computer is crazy
+                    };
+                    // battery icon needs extra padding
+                    text.push_str(&format!("{}   {}% | ", icon, bat_str));
                 }
+                text.push_str(&now.format(&fmt_str_clone).to_string());
+
+                time_lbl.set_text(&text);
+                time_lbl.set_tooltip_text(Some(&now.format("%A, %B%e").to_string()));
                 glib::timeout_future_seconds(1).await;
             }
         }
     ));
-
-    // Niri controls
-    let left_btn = gtk4::Button::builder()
-        .icon_name("left-large-symbolic")
-        .valign(gtk4::Align::Center)
+    let status_btn = gtk4::Button::builder()
+        .child(&time_lbl)
         .hexpand(false)
-        .css_classes(["circular"])
+        .css_classes(["flat"])
         .build();
-    left_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("focus-column-left")
+    status_btn.connect_clicked(|_| {
+        let _ = Command::new("vicinae")
+            .arg("vicinae://launch/@drewkri/quick-menu/quick-menu")
             .spawn();
     });
-    let fullscreen_btn = gtk4::Button::builder()
-        .icon_name("arrows-pointing-outward-symbolic")
-        .valign(gtk4::Align::Center)
-        .hexpand(false)
-        .css_classes(["circular"])
-        .build();
-    fullscreen_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("maximize-column")
-            .spawn();
-    });
-    let right_btn = gtk4::Button::builder()
-        .icon_name("right-large-symbolic")
-        .valign(gtk4::Align::Center)
-        .hexpand(false)
-        .css_classes(["circular"])
-        .build();
-    right_btn.connect_clicked(|_| {
-        let _ = Command::new("niri")
-            .arg("msg")
-            .arg("action")
-            .arg("focus-column-right")
-            .spawn();
-    });
-    niri_controls_box.append(&left_btn);
-    niri_controls_box.append(&fullscreen_btn);
-    niri_controls_box.append(&right_btn);
 
-    let notif_cmd = cfg.notifications_cmd.clone();
-    notif_button.connect_clicked(move |_| {
-        parse_and_run_command(&notif_cmd);
-    });
-
-    bottom_box.append(&launcher_button);
-    bottom_box.append(&misc_widgets_box);
-    bottom_box.append(&time_lbl);
-    bottom_box.append(&niri_controls_box);
-    bottom_box.append(&notif_button);
+    main_box.set_start_widget(Some(&buttons_box));
+    main_box.set_center_widget(Some(&center_btn));
+    main_box.set_end_widget(Some(&status_btn));
 
     window
 }
@@ -527,4 +294,183 @@ fn parse_and_run_command(cmd: &str) {
         }
         let _ = cmd.spawn();
     }
+}
+
+/// Gets the battery. Blocking on the cat command which really shouldn't block for very long
+/// but it may still block.
+fn try_get_battery() -> Option<(String, u32)> {
+    // Tries both BAT0 and BAT1 since the main battery could be either.
+    for i in 0..=1 {
+        if let Some(battery) = try_get_battery_index(i) {
+            if let Ok(parsed) = battery.parse() {
+                return Some((battery, parsed));
+            }
+        }
+    }
+
+    None
+}
+
+/// Gets battery for a specific battery e.g. BAT0 or BAT1.
+fn try_get_battery_index(i: u32) -> Option<String> {
+    let command = Command::new("cat")
+        .arg(&format!("/sys/class/power_supply/BAT{}/capacity", i))
+        .spawn()
+        .ok()?;
+    let output = command.wait_with_output().ok()?;
+    if output.status.success() {
+        String::from_utf8(output.stdout).ok()
+    } else {
+        None
+    }
+}
+
+struct NiriWindowData {
+    title: String,
+    app_id: String,
+    // everything else is unneeded
+}
+
+/// Handles logic for the window display button, communicating with niri to get the appropriate title/icon
+async fn update_window_display(label: Label, icon: Image) {
+    let subprocess = Subprocess::newv(
+        &[
+            OsStr::new("niri"),
+            OsStr::new("msg"),
+            OsStr::new("--json"),
+            OsStr::new("event-stream"),
+        ],
+        SubprocessFlags::STDOUT_PIPE,
+    )
+    .expect("Failed to start niri event stream");
+    let stdout_pipe = subprocess
+        .stdout_pipe()
+        .expect("Failed to get niri event stream stdout");
+    let reader = DataInputStream::new(&stdout_pipe);
+    let mut windows: HashMap<i32, NiriWindowData> = HashMap::new();
+    let display = Display::default().expect("Cannot connect to display");
+    let icon_theme = IconTheme::for_display(&display);
+    loop {
+        match reader.read_line_utf8_future(glib::Priority::DEFAULT).await {
+            Ok(Some(string)) => match json::parse(&string) {
+                Ok(parsed) => {
+                    if parsed["WindowFocusChanged"].has_key("id") {
+                        if let Some(id) = parsed["WindowFocusChanged"]["id"].as_i32() {
+                            if let Some(win) = windows.get(&id) {
+                                label.set_text(&win.title);
+                                icon.set_icon_name(Some(find_icon_for_app(
+                                    &icon_theme,
+                                    &win.app_id,
+                                )));
+                                label.set_visible(true);
+                                icon.set_visible(true);
+                            }
+                        } else {
+                            // "null" meaning no window focused
+                            label.set_visible(false);
+                            icon.set_visible(false);
+                        }
+                    } else if parsed.has_key("WindowsChanged") {
+                        let arr = &parsed["WindowsChanged"]["windows"];
+                        for val in arr.members() {
+                            if let Some((id, data)) = window_json_to_data(val) {
+                                if val["is_focused"].as_bool().is_some_and(|b| b) {
+                                    label.set_text(&data.title);
+                                    icon.set_icon_name(Some(find_icon_for_app(
+                                        &icon_theme,
+                                        &data.app_id,
+                                    )));
+                                    label.set_visible(true);
+                                    icon.set_visible(true);
+                                }
+                                windows.insert(id, data);
+                            }
+                        }
+                    } else if let Some(id) = parsed["WindowClosed"]["id"].as_i32() {
+                        windows.remove(&id);
+                    } else if parsed.has_key("WindowOpenedOrChanged") {
+                        if let Some((id, data)) =
+                            window_json_to_data(&parsed["WindowOpenedOrChanged"])
+                        {
+                            windows.insert(id, data);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to parse niri message: {}", e);
+                }
+            },
+            Ok(None) => {
+                // EOF reached (process finished writing to stdout)
+                error!("Niri stopped sending event stream");
+                break;
+            }
+            Err(err) => {
+                error!("Error reading line: {}", err);
+                break;
+            }
+        }
+    }
+}
+
+/// Parses a window from json and returns a tuple with its id and data.
+fn window_json_to_data(window_json: &JsonValue) -> Option<(i32, NiriWindowData)> {
+    let id = window_json["id"].as_i32()?;
+    let title = window_json["title"].as_str()?.to_owned();
+    let app_id = window_json["app_id"].as_str()?.to_owned();
+    Some((id, NiriWindowData { app_id, title }))
+}
+
+/// Returns a usable icon name for the app with app_id, or a placeholder if none are found.
+/// TODO: better searching, if it matters
+fn find_icon_for_app<'a>(icon_theme: &IconTheme, app_id: &'a str) -> &'a str {
+    if icon_theme.has_icon(app_id) {
+        app_id
+    } else {
+        "pegged-wheels-symbolic"
+    }
+}
+
+fn add_app_menu_popover(app: &Application, button: &Button) {
+    // 1. Create actions and add them to the application scope
+    let action_close = gio::SimpleAction::new("close_window", None);
+    action_close.connect_activate(|_, _| {
+        let _ = Command::new("niri")
+            .arg("msg")
+            .arg("action")
+            .arg("close-window")
+            .spawn();
+    });
+    app.add_action(&action_close);
+
+    let action_max = gio::SimpleAction::new("maximize", None);
+    action_max.connect_activate(|_, _| {
+        let _ = Command::new("niri")
+            .arg("msg")
+            .arg("action")
+            .arg("maximize-column")
+            .spawn();
+    });
+    app.add_action(&action_max);
+
+    let action_max_edges = gio::SimpleAction::new("maximize_edges", None);
+    action_max_edges.connect_activate(move |_, _| {
+        let _ = Command::new("niri")
+            .arg("msg")
+            .arg("action")
+            .arg("maximize-window-to-edges")
+            .spawn();
+    });
+    app.add_action(&action_max_edges);
+
+    let menu = gio::Menu::new();
+    menu.append(Some("Close"), Some("app.close_window"));
+    menu.append(Some("Toggle Maximize"), Some("app.maximize"));
+    menu.append(Some("Toggle Maximize to Edges"), Some("app.maximize_edges"));
+
+    let popover = PopoverMenu::from_model(Some(&menu));
+    popover.set_parent(button);
+    button.connect_clicked(move |_| {
+        popover.popup();
+    });
 }

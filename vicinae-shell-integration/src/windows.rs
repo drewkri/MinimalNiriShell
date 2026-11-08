@@ -14,9 +14,9 @@ impl AppState {
         let output_id = output.id().protocol_id();
 
         // Create windows for each output
-        let corner_surface = self.compositor_state.create_surface(&qh);
+        let corner_surface = self.compositor_state.create_surface(qh);
         let corner_window = self.layer_shell.create_layer_surface(
-            &qh,
+            qh,
             corner_surface,
             smithay_client_toolkit::shell::wlr_layer::Layer::Top,
             Some("vicinae-shell-integration.hot-corner"),
@@ -59,9 +59,9 @@ impl AppState {
 
         // Create background window if needed
         if self.args.background.is_some() {
-            let bg_surface = self.compositor_state.create_surface(&qh);
+            let bg_surface = self.compositor_state.create_surface(qh);
             let bg_window = self.layer_shell.create_layer_surface(
-                &qh,
+                qh,
                 bg_surface,
                 smithay_client_toolkit::shell::wlr_layer::Layer::Top,
                 Some("vicinae-shell-integration.background"),
@@ -89,9 +89,9 @@ impl AppState {
         // Nearly a copy of above except the namespace is different
         // and the listed type is different
         if self.args.backdrop.is_some() {
-            let bg_surface = self.compositor_state.create_surface(&qh);
+            let bg_surface = self.compositor_state.create_surface(qh);
             let bg_window = self.layer_shell.create_layer_surface(
-                &qh,
+                qh,
                 bg_surface,
                 smithay_client_toolkit::shell::wlr_layer::Layer::Top,
                 Some("vicinae-shell-integration.backdrop"),

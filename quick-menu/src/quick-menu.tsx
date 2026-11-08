@@ -173,6 +173,18 @@ type Option = {
 
 export const options: Option[] = [
   {
+    name: "Close",
+    icon: Icon.XMarkCircle,
+    action: (
+      <Action
+        title="Close this window"
+        onAction={() => {
+          closeMainWindow();
+        }}
+      ></Action>
+    ),
+  },
+  {
     name: "Notifications",
     icon: Icon.Bell,
     action: (
@@ -220,6 +232,20 @@ export const options: Option[] = [
         title="View System Tray"
         onAction={() => {
           execAsync("vicinae vicinae://launch/core/search-tray");
+        }}
+      ></Action>
+    ),
+  },
+  {
+    name: "Processes",
+    icon: Icon.ComputerChip,
+    action: (
+      <Action
+        title="View running processes"
+        onAction={() => {
+          execAsync(
+            "vicinae vicinae://launch/@leonkohli/store.vicinae.process-manager/processes",
+          );
         }}
       ></Action>
     ),

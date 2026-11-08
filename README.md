@@ -24,6 +24,7 @@ In order for everything to work, you must have the following packages installed 
 - cargo
 - npm
 - playerctl
+- FontAwesome nerd fonts (used for the bar's battery display)
 
 The following applications are used by default with quick-menu, although you can replace them with something else in the preferences
 if you prefer:
@@ -41,10 +42,13 @@ The script will do the following:
 You will need to bring your own notification daemon. The recommended default is swaync, if you wish to use another notification daemon
 you will need to change the settings of the quick menu extension to make the notifications button open the correct program.
 
-Then, edit your Niri configuration and make sure it spawns Vicinae (`vicinae serve`) and the Rust glue program for system tray support and the hot corner (`vicinae-shell-integration`). It has some command line options you may want to review with `vicinae-shell-integration --help` to
+Then, edit your Niri configuration and make sure it spawns Vicinae (`vicinae server`) and the Rust glue program for system tray support and the hot corner (`vicinae-shell-integration`). It has some command line options you may want to review with `vicinae-shell-integration --help` to
 handle a desktop background and customize the size and position of the hot corner. If you want more background options consider bringing
 your own program e.g. swaybg.
 
-Optionally, have the device spawn the tablet bar (`niri-vicinae-bar`) when tablet mode is detected, and kill it (`pkill niri-vicinae-bar`) when the device is no longer in tablet mode.
+Optionally, have the device spawn the bar (`niri-vicinae-bar`). You can also have the device spawn the bar only when tablet mode is detected, and kill it (`pkill niri-vicinae-bar`) when the device is no longer in tablet mode.
+
+The bar has some settings which can be configured by running `niri-vicinae-bar --settings`. It will also attempt to load custom CSS from
+a file named `style.css` in the config directory (`~/.config/io.github.drewkri.niri-vicinae-bar`).
 
 You can then safely delete the repository and adjust settings as desired.
