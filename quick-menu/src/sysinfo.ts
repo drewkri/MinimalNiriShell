@@ -66,7 +66,7 @@ async function getBattery(): Promise<string> {
   }
 
   if (result) {
-    return result.stdout + "%";
+    return result.stdout.trim() + "%";
   } else {
     return "Unknown";
   }
